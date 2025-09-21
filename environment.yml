@@ -1,0 +1,15 @@
+name: socialpulse
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - streamlit
+      - openai
+      - google-api-python-client
+      - vaderSentiment
+      - wordcloud
+      - matplotlib
+      - pandas
