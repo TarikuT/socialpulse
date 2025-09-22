@@ -1,28 +1,40 @@
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
-from typing import List
 import streamlit as st
+import os
 
 
-def plot_sentiment_histogram(df):
-    """Visualizes sentiment polarity distribution."""
-    st.subheader("Sentiment Polarity Distribution")
-    fig, ax = plt.subplots()
-    df['polarity'].hist(bins=20, ax=ax)
-    ax.set_title("Polarity Histogram")
-    ax.set_xlabel("Polarity")
-    ax.set_ylabel("Frequency")
-    st.pyplot(fig)
+def generate_wordcloud(texts, title="WordCloud", language="en"):
+    if not texts:
+        print("No text to generate wordcloud.")
+        return
+
+    font_path = None
+    if language in ['am', 'om']:
+        font_path = os.path.join("static", "NotoSansEthiopic-Regular.ttf")
+
+    cloud = WordCloud(
+        width=800,
+        height=400,
+        background_color="white",
+        font_path=font_path,
+        colormap="viridis"
+    ).generate(" ".join(texts))
+
+    plt.figure(figsize=(10, 5))
+    plt.imshow(cloud, interpolation="bilinear")
+    plt.axis("off")
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
 
 
-def generate_wordcloud(texts: List[str], font_path: str = None):
-    """Generates and displays a word cloud from comment texts."""
-    text_blob = " ".join(texts)
-    wc = WordCloud(font_path=font_path, width=800, height=400, background_color='white').generate(text_blob)
-
-    st.subheader("Word Cloud")
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wc, interpolation='bilinear')
-    ax.axis("off")
-    st.pyplot(fig)
-
+def plot_sentiment_histogram(sentiments):
+    plt.figure(figsize=(8, 4))
+    plt.hist(sentiments, bins=20, color="skyblue", edgecolor="black")
+    plt.xlabel("Sentiment Polarity")
+    plt.ylabel("Frequency")
+    plt.title("Sentiment Distribution")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()

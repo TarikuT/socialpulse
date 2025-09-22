@@ -5,39 +5,59 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import streamlit as st
 import pandas as pd
 from socialpulse_core.youtube import get_youtube_comments
-from socialpulse_core.analyzer import summarize_comments
-from socialpulse_core.viz import plot_sentiment_histogram, generate_wordcloud
+from socialpulse_core.analyzer import analyze_comments
+from socialpulse_core.viz import generate_wordcloud, plot_sentiment_histogram
 
-# 🔐 Load API key
-YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+
+with st.sidebar:
+    st.markdown("### 🛠 How to Use")
+    st.markdown("1. Paste a public YouTube video link")
+    st.markdown("2. The app will fetch & analyze top 100 comments")
+    st.markdown("3. Visual insights & language support included!")
+
+video_url = st.text_input("🎥 Enter YouTube Video URL")
+
+
+
+
 
 st.set_page_config(page_title="SocialPulse AI", layout="wide")
-st.title("📊 SocialPulse AI — YouTube Comment Insight")
+st.title("📊 SocialPulse AI — YouTube Comment Analyzer")
 
-video_url = st.text_input("🔗 Paste YouTube Video URL:")
-max_comments = st.slider("How many comments to fetch?", min_value=10, max_value=500, step=10, value=100)
+st.markdown("""
+Analyze public YouTube comments in multiple languages and generate sentiment & keyword visualizations.
+""")
 
-if st.button("Fetch & Analyze"):
-    if "v=" in video_url:
-        video_id = video_url.split("v=")[-1].split("&")[0]
-        df = get_youtube_comments(video_id, YOUTUBE_API_KEY, max_comments=max_comments)
+video_url = st.text_input("🔗 Enter a YouTube video URL:")
 
-        if not df.empty:
-            df = summarize_comments(df)
+if video_url:
+    st.info("Fetching comments...")
+    df = get_youtube_comments(video_url, os.environ.get("YOUTUBE_API_KEY"), max_comments=150)
 
-            st.subheader("📋 Raw Comments")
-            st.dataframe(df[['author', 'text', 'language', 'translated_text', 'polarity']])
+    if df.empty:
+        st.warning("🚫 No comments found or failed to fetch comments.")
+        st.stop()
 
-            plot_sentiment_histogram(df)
+    st.success(f"✅ Retrieved {len(df)} comments.")
 
-            st.markdown("---")
-            col1, col2 = st.columns(2)
-            with col1:
-                generate_wordcloud(df['text'].tolist(), title="Original Language WordCloud")
-            with col2:
-                generate_wordcloud(df['translated_text'].tolist(), title="Translated (English) WordCloud")
+    st.info("🔍 Analyzing comment language and sentiment...")
+    result = analyze_comments(df['text'].tolist())
 
-        else:
-            st.warning("No comments retrieved. Try another video link.")
-    else:
-        st.error("Invalid YouTube URL")
+    if not result['original']:
+        st.warning("⚠️ No translatable comments were found. Try another video.")
+        st.stop()
+
+    st.markdown("---")
+    st.subheader("🌍 Language WordCloud")
+    generate_wordcloud(result['original'], title="Original Language WordCloud", language=result['language'][0])
+
+    st.subheader("🗣️ English Translated WordCloud")
+    generate_wordcloud(result['translated'], title="Translated to English")
+
+    st.subheader("📈 Sentiment Analysis")
+    plot_sentiment_histogram(result['sentiment'])
+
+    st.markdown("---")
+    st.subheader("📄 Raw Data")
+    st.dataframe(pd.DataFrame(result))
+

@@ -6,3 +6,12 @@ torch
 matplotlib
 wordcloud
 langdetect
+
+streamlit
+pandas
+matplotlib
+wordcloud
+langdetect
+deep-translator
+textblob
+google-api-python-client
