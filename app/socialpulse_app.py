@@ -1,7 +1,9 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import streamlit as st
 import pandas as pd
-import os
-
 from socialpulse_core.youtube import get_youtube_comments
 from socialpulse_core.analyzer import summarize_comments
 from socialpulse_core.viz import plot_sentiment_histogram, generate_wordcloud
