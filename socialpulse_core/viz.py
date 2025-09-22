@@ -25,3 +25,4 @@ def generate_wordcloud(texts: List[str], font_path: str = None):
     ax.imshow(wc, interpolation='bilinear')
     ax.axis("off")
     st.pyplot(fig)
+

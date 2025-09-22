@@ -1,9 +1,24 @@
 import pandas as pd
 from textblob import TextBlob
+from langdetect import detect
+from deep_translator import GoogleTranslator
+
+
+def detect_language(text):
+    try:
+        return detect(text)
+    except:
+        return "unknown"
+
+
+def translate_to_english(text):
+    try:
+        return GoogleTranslator(source='auto', target='en').translate(text)
+    except:
+        return text  # return original if translation fails
 
 
 def analyze_sentiment(text: str) -> dict:
-    """Analyzes sentiment using TextBlob."""
     blob = TextBlob(text)
     return {
         'polarity': blob.polarity,
@@ -12,9 +27,9 @@ def analyze_sentiment(text: str) -> dict:
 
 
 def summarize_comments(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds sentiment analysis columns to comment DataFrame."""
-    df['polarity'] = df['text'].apply(lambda x: TextBlob(x).sentiment.polarity)
-    df['subjectivity'] = df['text'].apply(lambda x: TextBlob(x).sentiment.subjectivity)
-    df['summary'] = df['text'].apply(lambda x: TextBlob(x).noun_phrases[:3])
+    df['language'] = df['text'].apply(detect_language)
+    df['translated_text'] = df['text'].apply(translate_to_english)
+    df['polarity'] = df['translated_text'].apply(lambda x: TextBlob(x).sentiment.polarity)
+    df['subjectivity'] = df['translated_text'].apply(lambda x: TextBlob(x).sentiment.subjectivity)
     return df
 
