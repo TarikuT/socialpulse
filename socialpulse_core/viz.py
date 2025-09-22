@@ -1,40 +1,66 @@
+import os
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import streamlit as st
-import os
 
 
 def generate_wordcloud(texts, title="WordCloud", language="en"):
+    """
+    Generate and display a word cloud for the provided texts.
+
+    Args:
+        texts (list[str]): List of input strings.
+        title (str): Title of the WordCloud.
+        language (str): Detected language code (used for font selection).
+    """
     if not texts:
-        print("No text to generate wordcloud.")
+        st.warning("⚠️ No text available for word cloud.")
         return
 
+    # Set font path for Amharic or Afaan Oromo
     font_path = None
     if language in ['am', 'om']:
         font_path = os.path.join("static", "NotoSansEthiopic-Regular.ttf")
+        if not os.path.exists(font_path):
+            st.error("❌ Ethiopic font not found. Please place 'NotoSansEthiopic-Regular.ttf' in the 'static/' folder.")
+            return
 
-    cloud = WordCloud(
-        width=800,
-        height=400,
-        background_color="white",
-        font_path=font_path,
-        colormap="viridis"
-    ).generate(" ".join(texts))
+    try:
+        cloud = WordCloud(
+            width=800,
+            height=400,
+            background_color="white",
+            font_path=font_path,
+            colormap="viridis"
+        ).generate(" ".join(texts))
 
-    plt.figure(figsize=(10, 5))
-    plt.imshow(cloud, interpolation="bilinear")
-    plt.axis("off")
-    plt.title(title)
-    plt.tight_layout()
-    plt.show()
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.imshow(cloud, interpolation="bilinear")
+        ax.axis("off")
+        ax.set_title(title)
+        st.pyplot(fig)
+    except Exception as e:
+        st.error(f"❌ Failed to generate word cloud: {str(e)}")
 
 
 def plot_sentiment_histogram(sentiments):
-    plt.figure(figsize=(8, 4))
-    plt.hist(sentiments, bins=20, color="skyblue", edgecolor="black")
-    plt.xlabel("Sentiment Polarity")
-    plt.ylabel("Frequency")
-    plt.title("Sentiment Distribution")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
+    """
+    Plot a histogram of sentiment polarity scores.
+
+    Args:
+        sentiments (list[float]): List of sentiment polarity values.
+    """
+    if not sentiments:
+        st.warning("⚠️ No sentiment data to plot.")
+        return
+
+    try:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.hist(sentiments, bins=20, color="skyblue", edgecolor="black")
+        ax.set_xlabel("Sentiment Polarity")
+        ax.set_ylabel("Frequency")
+        ax.set_title("Sentiment Distribution")
+        ax.grid(True)
+        st.pyplot(fig)
+    except Exception as e:
+        st.error(f"❌ Failed to plot sentiment histogram: {str(e)}")
