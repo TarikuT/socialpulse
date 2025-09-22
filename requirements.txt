@@ -1,14 +1,6 @@
 streamlit
 pandas
 numpy
-transformers
-torch
-matplotlib
-wordcloud
-langdetect
-
-streamlit
-pandas
 matplotlib
 wordcloud
 langdetect

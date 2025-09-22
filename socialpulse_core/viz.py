@@ -2,7 +2,7 @@ import os
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import streamlit as st
-
+import pathlib
 
 def generate_wordcloud(texts, title="WordCloud", language="en"):
     """
@@ -20,8 +20,9 @@ def generate_wordcloud(texts, title="WordCloud", language="en"):
     # Set font path for Amharic or Afaan Oromo
     font_path = None
     if language in ['am', 'om']:
-        font_path = os.path.join("static", "NotoSansEthiopic-Regular.ttf")
-        if not os.path.exists(font_path):
+        font_path = pathlib.Path(__file__).parent.parent / "static" / "NotoSansEthiopic-Regular.ttf"
+
+        if not font_path.exists():
             st.error("❌ Ethiopic font not found. Please place 'NotoSansEthiopic-Regular.ttf' in the 'static/' folder.")
             return
 
