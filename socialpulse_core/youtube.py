@@ -1,53 +1,103 @@
-from googleapiclient.discovery import build
+"""YouTube comment extraction.
+
+Fetches top-level comments from a public YouTube video and returns a DataFrame
+enriched with metadata needed for downstream sentiment analysis and the
+comment-galaxy visualization (timestamps, like counts, author names).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Optional
+
 import pandas as pd
-import streamlit as st
+from googleapiclient.discovery import build
 
-# Load API key from Streamlit secrets
-YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 
-def get_youtube_comments(video_url: str, api_key: str = YOUTUBE_API_KEY, max_comments: int = 100) -> pd.DataFrame:
-    """Fetches top-level comments from a public YouTube video."""
+_YT_URL_PATTERNS = [
+    re.compile(r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([0-9A-Za-z_-]{11})"),
+]
 
-    try:
-        video_id = extract_video_id(video_url)
-        if not video_id:
-            st.error("Invalid YouTube URL. Please check and try again.")
-            return pd.DataFrame()
 
-        youtube = build("youtube", "v3", developerKey=api_key)
-        comments = []
-        next_page_token = None
+def extract_video_id(url_or_id: str) -> Optional[str]:
+    """Extract an 11-character video ID from a URL or return the input if it
+    already looks like a bare ID. Returns None if nothing matches."""
+    if not url_or_id:
+        return None
 
-        while len(comments) < max_comments:
-            response = youtube.commentThreads().list(
+    candidate = url_or_id.strip()
+
+    # Bare ID
+    if re.fullmatch(r"[0-9A-Za-z_-]{11}", candidate):
+        return candidate
+
+    for pattern in _YT_URL_PATTERNS:
+        match = pattern.search(candidate)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def get_youtube_comments(
+    video_url: str,
+    api_key: str,
+    max_comments: int = 150,
+) -> pd.DataFrame:
+    """Fetch top-level comments from a public YouTube video.
+
+    Returns a DataFrame with columns:
+        - text         : str   (comment body, plain text)
+        - published_at : datetime (UTC)
+        - like_count   : int
+        - author       : str   (display name)
+
+    Returns an empty DataFrame on failure. Errors are raised to the caller so
+    the UI layer can decide how to surface them.
+    """
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        raise ValueError(f"Could not extract a video ID from: {video_url!r}")
+
+    youtube = build("youtube", "v3", developerKey=api_key)
+
+    rows: list[dict] = []
+    next_page_token: Optional[str] = None
+
+    while len(rows) < max_comments:
+        page_size = min(100, max_comments - len(rows))
+        response = (
+            youtube.commentThreads()
+            .list(
                 part="snippet",
                 videoId=video_id,
-                maxResults=min(100, max_comments - len(comments)),
+                maxResults=page_size,
                 pageToken=next_page_token,
                 textFormat="plainText",
-            ).execute()
+                order="relevance",
+            )
+            .execute()
+        )
 
-            for item in response.get("items", []):
-                comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
-                comments.append(comment)
+        for item in response.get("items", []):
+            snippet = item["snippet"]["topLevelComment"]["snippet"]
+            rows.append(
+                {
+                    "text": snippet.get("textDisplay", ""),
+                    "published_at": snippet.get("publishedAt"),
+                    "like_count": int(snippet.get("likeCount", 0) or 0),
+                    "author": snippet.get("authorDisplayName", ""),
+                }
+            )
 
-            next_page_token = response.get("nextPageToken")
-            if not next_page_token:
-                break
+        next_page_token = response.get("nextPageToken")
+        if not next_page_token:
+            break
 
-        return pd.DataFrame({"text": comments})
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["published_at"] = pd.to_datetime(df["published_at"], utc=True, errors="coerce")
+        # Drop comments with no text after extraction
+        df = df[df["text"].astype(str).str.strip().astype(bool)].reset_index(drop=True)
 
-    except Exception as e:
-        st.error(f"Error fetching comments: {e}")
-        return pd.DataFrame()
-
-def extract_video_id(url: str) -> str:
-    """Extracts the video ID from a YouTube URL."""
-    try:
-        if "v=" in url:
-            return url.split("v=")[-1].split("&")[0]
-        elif "youtu.be/" in url:
-            return url.split("youtu.be/")[-1].split("?")[0]
-        return ""
-    except:
-        return ""
+    return df
