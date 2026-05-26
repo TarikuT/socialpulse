@@ -1,8 +1,8 @@
-"""SocialPulse — YouTube comment analyzer (Streamlit UI).
+"""SocialPulse - YouTube comment analyzer (Streamlit UI).
 
 UI only. All fetching, classification, and figure generation lives in
-socialpulse_core/*. Refactored to use the GPT-4o-mini classifier and the
-new comment-galaxy visualization.
+socialpulse_core/*. Uses the GPT-4o-mini classifier and the comment-galaxy
+visualization. Shows a progress bar during the parallel analysis pass.
 """
 
 import os
@@ -27,10 +27,10 @@ from socialpulse_core.viz import (
 # -----------------------------
 # Secrets / config
 # -----------------------------
-def _get_secret(key: str) -> str:
+def _get_secret(key):
     value = None
     try:
-        value = st.secrets.get(key)  # type: ignore[attr-defined]
+        value = st.secrets.get(key)
     except Exception:
         value = None
     return value or os.environ.get(key, "")
@@ -44,9 +44,9 @@ OPENAI_API_KEY = _get_secret("OPENAI_API_KEY")
 # Page
 # -----------------------------
 st.set_page_config(
-    page_title="SocialPulse — YouTube comment analyzer",
+    page_title="SocialPulse - YouTube comment analyzer",
     layout="wide",
-    page_icon="🎯",
+    page_icon=":dart:",
 )
 
 st.title("SocialPulse")
@@ -84,17 +84,19 @@ run = st.button("Analyze", type="primary", use_container_width=False)
 # Pipeline
 # -----------------------------
 @st.cache_data(show_spinner=False, ttl=3600)
-def _fetch(url: str, api_key: str, n: int) -> pd.DataFrame:
+def _fetch(url, api_key, n):
     return get_youtube_comments(url, api_key=api_key, max_comments=n)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _analyze(df: pd.DataFrame, openai_key: str) -> pd.DataFrame:
-    return analyze_comments(df, openai_api_key=openai_key)
+def _analyze(df, openai_key, _progress_cb=None):
+    # Leading underscore on _progress_cb tells st.cache_data to skip hashing
+    # it (callbacks aren't hashable and we don't want them in the cache key).
+    return analyze_comments(df, openai_api_key=openai_key, progress_callback=_progress_cb)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _summarize(df: pd.DataFrame, openai_key: str) -> str:
+def _summarize(df, openai_key):
     return summarize_overall(df, openai_api_key=openai_key)
 
 
@@ -109,7 +111,7 @@ if run and video_url:
     with st.spinner("Fetching comments from YouTube..."):
         try:
             comments_df = _fetch(video_url, YOUTUBE_API_KEY, int(max_comments))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             st.error(f"Failed to fetch comments: {exc}")
             st.stop()
 
@@ -119,24 +121,36 @@ if run and video_url:
 
     st.success(f"Fetched {len(comments_df)} comments.")
 
-    with st.spinner(f"Analyzing {len(comments_df)} comments with GPT-4o-mini..."):
-        try:
-            enriched = _analyze(comments_df, OPENAI_API_KEY)
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Analysis failed: {exc}")
-            st.stop()
+    # ---- Parallel analysis with progress bar ----
+    progress_slot = st.empty()
+    progress_bar = progress_slot.progress(
+        0.0, text=f"Analyzing {len(comments_df)} comments with GPT-4o-mini..."
+    )
+
+    def _update_progress(done, total):
+        frac = (done / total) if total else 1.0
+        progress_bar.progress(
+            frac, text=f"Analyzing... {done}/{total} batches complete"
+        )
+
+    try:
+        enriched = _analyze(comments_df, OPENAI_API_KEY, _progress_cb=_update_progress)
+    except Exception as exc:
+        progress_slot.empty()
+        st.error(f"Analysis failed: {exc}")
+        st.stop()
+    progress_slot.empty()
 
     # ---- Headline metrics ----
     total = len(enriched)
     pos = int((enriched["sentiment_label"] == "positive").sum())
     neg = int((enriched["sentiment_label"] == "negative").sum())
-    neu = int((enriched["sentiment_label"] == "neutral").sum())
     avg_score = float(enriched["sentiment_score"].mean()) if total else 0.0
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Comments analyzed", total)
-    m2.metric("Positive", f"{pos}  ({pos / total:.0%})" if total else "—")
-    m3.metric("Negative", f"{neg}  ({neg / total:.0%})" if total else "—")
+    m2.metric("Positive", f"{pos}  ({pos / total:.0%})" if total else "-")
+    m3.metric("Negative", f"{neg}  ({neg / total:.0%})" if total else "-")
     m4.metric("Avg. sentiment", f"{avg_score:+.2f}")
 
     # ---- AI summary ----
@@ -144,16 +158,19 @@ if run and video_url:
     with st.spinner("Summarizing reaction..."):
         try:
             summary = _summarize(enriched, OPENAI_API_KEY)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             summary = f"_Could not generate summary: {exc}_"
     st.markdown(summary)
 
     # ---- Primary viz: comment galaxy ----
     st.subheader("Comment galaxy")
-    st.caption("Each dot is one comment. Position shows when and how positive/negative. Size shows likes. Hover for the text.")
+    st.caption(
+        "Each dot is one comment. Position shows when and how positive/negative. "
+        "Size shows likes. Hover for the text."
+    )
     st.plotly_chart(comment_galaxy(enriched), use_container_width=True)
 
-    # ---- Secondary viz: donut + themes ----
+    # ---- Donut + themes ----
     col_a, col_b = st.columns([1, 2])
     with col_a:
         st.plotly_chart(sentiment_donut(enriched), use_container_width=True)
@@ -166,9 +183,8 @@ if run and video_url:
         st.subheader("Language mix")
         st.bar_chart(lang_counts)
 
-    # ---- Word cloud (kept for original-language flavor) ----
+    # ---- Word cloud (original-language flavor) ----
     with st.expander("Word cloud (original language)"):
-        # Use the dominant non-English language if present, else English
         non_en = enriched[enriched["language"].isin(["am", "om", "ti"])]
         if not non_en.empty:
             dom_lang = non_en["language"].value_counts().idxmax()
