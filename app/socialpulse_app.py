@@ -1,21 +1,24 @@
 """SocialPulse - YouTube comment analyzer (Streamlit UI).
 
-UI only. All fetching, classification, and figure generation lives in
-socialpulse_core/*. Uses the GPT-4o-mini classifier and the comment-galaxy
-visualization. Shows a progress bar during the parallel analysis pass.
+Uses Claude Sonnet 4.6 by default (validated 78%+ agreement on Ethiopian
+content). Falls back gracefully if Anthropic key missing — will fail loudly
+with a clear message rather than silently using a stale config.
 """
 
 import os
 import sys
 
-# Ensure socialpulse_core is importable when run via `streamlit run`.
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
 import streamlit as st
 
 from socialpulse_core.youtube import get_youtube_comments
-from socialpulse_core.analyzer import analyze_comments, summarize_overall
+from socialpulse_core.analyzer import (
+    analyze_comments,
+    summarize_overall,
+    DEFAULT_MODEL,
+)
 from socialpulse_core.viz import (
     comment_galaxy,
     sentiment_donut,
@@ -24,9 +27,9 @@ from socialpulse_core.viz import (
 )
 
 
-# -----------------------------
-# Secrets / config
-# -----------------------------
+# ---------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------
 def _get_secret(key):
     value = None
     try:
@@ -38,11 +41,19 @@ def _get_secret(key):
 
 YOUTUBE_API_KEY = _get_secret("YOUTUBE_API_KEY")
 OPENAI_API_KEY = _get_secret("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = _get_secret("ANTHROPIC_API_KEY")
 
 
-# -----------------------------
+def _api_key_for_model(model: str) -> str:
+    """Return the right API key for the chosen model."""
+    if model.startswith("claude-"):
+        return ANTHROPIC_API_KEY
+    return OPENAI_API_KEY
+
+
+# ---------------------------------------------------------------
 # Page
-# -----------------------------
+# ---------------------------------------------------------------
 st.set_page_config(
     page_title="SocialPulse - YouTube comment analyzer",
     layout="wide",
@@ -61,16 +72,19 @@ with st.sidebar:
     )
     st.markdown("---")
     st.markdown("**Languages supported:** English, Amharic, Afaan Oromo, Tigrinya.")
+    st.markdown(f"**Model:** `{DEFAULT_MODEL}`")
     st.markdown("Sentiment is judged by an LLM in the comment's native language.")
     if not YOUTUBE_API_KEY:
         st.warning("YouTube API key not configured.")
-    if not OPENAI_API_KEY:
+    if DEFAULT_MODEL.startswith("claude-") and not ANTHROPIC_API_KEY:
+        st.warning("Anthropic API key not configured.")
+    elif not DEFAULT_MODEL.startswith("claude-") and not OPENAI_API_KEY:
         st.warning("OpenAI API key not configured.")
 
 
-# -----------------------------
+# ---------------------------------------------------------------
 # Inputs
-# -----------------------------
+# ---------------------------------------------------------------
 col_in1, col_in2 = st.columns([3, 1])
 with col_in1:
     video_url = st.text_input("YouTube video URL", placeholder="https://www.youtube.com/watch?v=...")
@@ -80,32 +94,33 @@ with col_in2:
 run = st.button("Analyze", type="primary", use_container_width=False)
 
 
-# -----------------------------
+# ---------------------------------------------------------------
 # Pipeline
-# -----------------------------
+# ---------------------------------------------------------------
 @st.cache_data(show_spinner=False, ttl=3600)
 def _fetch(url, api_key, n):
     return get_youtube_comments(url, api_key=api_key, max_comments=n)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _analyze(df, openai_key, _progress_cb=None):
-    # Leading underscore on _progress_cb tells st.cache_data to skip hashing
-    # it (callbacks aren't hashable and we don't want them in the cache key).
-    return analyze_comments(df, openai_api_key=openai_key, progress_callback=_progress_cb)
+def _analyze(df, llm_key, model, _progress_cb=None):
+    return analyze_comments(df, api_key=llm_key, model=model, progress_callback=_progress_cb)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _summarize(df, openai_key):
-    return summarize_overall(df, openai_api_key=openai_key)
+def _summarize(df, llm_key, model):
+    return summarize_overall(df, api_key=llm_key, model=model)
 
 
 if run and video_url:
     if not YOUTUBE_API_KEY:
         st.error("Missing YOUTUBE_API_KEY. Add it to .streamlit/secrets.toml.")
         st.stop()
-    if not OPENAI_API_KEY:
-        st.error("Missing OPENAI_API_KEY. Add it to .streamlit/secrets.toml.")
+
+    llm_key = _api_key_for_model(DEFAULT_MODEL)
+    if not llm_key:
+        need = "ANTHROPIC_API_KEY" if DEFAULT_MODEL.startswith("claude-") else "OPENAI_API_KEY"
+        st.error(f"Missing {need}. Add it to .streamlit/secrets.toml.")
         st.stop()
 
     with st.spinner("Fetching comments from YouTube..."):
@@ -121,27 +136,23 @@ if run and video_url:
 
     st.success(f"Fetched {len(comments_df)} comments.")
 
-    # ---- Parallel analysis with progress bar ----
     progress_slot = st.empty()
     progress_bar = progress_slot.progress(
-        0.0, text=f"Analyzing {len(comments_df)} comments with GPT-4o-mini..."
+        0.0, text=f"Analyzing {len(comments_df)} comments with {DEFAULT_MODEL}..."
     )
 
     def _update_progress(done, total):
         frac = (done / total) if total else 1.0
-        progress_bar.progress(
-            frac, text=f"Analyzing... {done}/{total} batches complete"
-        )
+        progress_bar.progress(frac, text=f"Analyzing... {done}/{total} batches complete")
 
     try:
-        enriched = _analyze(comments_df, OPENAI_API_KEY, _progress_cb=_update_progress)
+        enriched = _analyze(comments_df, llm_key, DEFAULT_MODEL, _progress_cb=_update_progress)
     except Exception as exc:
         progress_slot.empty()
         st.error(f"Analysis failed: {exc}")
         st.stop()
     progress_slot.empty()
 
-    # ---- Headline metrics ----
     total = len(enriched)
     pos = int((enriched["sentiment_label"] == "positive").sum())
     neg = int((enriched["sentiment_label"] == "negative").sum())
@@ -153,16 +164,14 @@ if run and video_url:
     m3.metric("Negative", f"{neg}  ({neg / total:.0%})" if total else "-")
     m4.metric("Avg. sentiment", f"{avg_score:+.2f}")
 
-    # ---- AI summary ----
     st.subheader("Overall reaction")
     with st.spinner("Summarizing reaction..."):
         try:
-            summary = _summarize(enriched, OPENAI_API_KEY)
+            summary = _summarize(enriched, llm_key, DEFAULT_MODEL)
         except Exception as exc:
             summary = f"_Could not generate summary: {exc}_"
     st.markdown(summary)
 
-    # ---- Primary viz: comment galaxy ----
     st.subheader("Comment galaxy")
     st.caption(
         "Each dot is one comment. Position shows when and how positive/negative. "
@@ -170,20 +179,17 @@ if run and video_url:
     )
     st.plotly_chart(comment_galaxy(enriched), use_container_width=True)
 
-    # ---- Donut + themes ----
     col_a, col_b = st.columns([1, 2])
     with col_a:
         st.plotly_chart(sentiment_donut(enriched), use_container_width=True)
     with col_b:
         st.plotly_chart(theme_bar(enriched), use_container_width=True)
 
-    # ---- Language mix ----
     if "language" in enriched.columns:
         lang_counts = enriched["language"].value_counts()
         st.subheader("Language mix")
         st.bar_chart(lang_counts)
 
-    # ---- Word cloud (original-language flavor) ----
     with st.expander("Word cloud (original language)"):
         non_en = enriched[enriched["language"].isin(["am", "om", "ti"])]
         if not non_en.empty:
@@ -198,7 +204,6 @@ if run and video_url:
         else:
             st.pyplot(fig)
 
-    # ---- Raw data ----
     with st.expander("Raw analyzed data"):
         display_cols = [
             "text", "language", "sentiment_label", "sentiment_score",

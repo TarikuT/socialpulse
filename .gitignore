@@ -54,3 +54,15 @@ Thumbs.db
 
 # ----- Streamlit -----
 .streamlit/cache/
+
+# ----- QA data (comments, labels — kept local, not committed) -----
+qa/*.csv
+qa/*.json
+qa/preds_*.csv
+!qa/README.md
+!qa/eval_model.py
+
+# ----- One-off recovery / setup scripts (not part of the product) -----
+cleanup_git.bat
+cleanup_git.ps1
+
